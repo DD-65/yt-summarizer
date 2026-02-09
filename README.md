@@ -9,9 +9,8 @@ local pipeline that gives you a text summary of a YouTube video.
 3. Transcribes the chunks locally using `voxmlx`
 4. Sends the transcript to a local model in LM Studio for a concise summary
 
-## Requirements
+## Requirements (macOS only)
 
-- macOS with Bash
 - `yt-dlp`
 - `ffmpeg`
 - `curl`
