@@ -39,4 +39,5 @@ LM_API_TOKEN=
 
 ## Reference
 
-- `voxmlx` GitHub repo: https://github.com/awnihannun/voxmlx
+- `voxmlx`: https://github.com/awnihannun/voxmlx
+- `yt-dlp`: https://github.com/yt-dlp/yt-dlp
