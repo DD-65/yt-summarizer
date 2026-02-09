@@ -2,7 +2,7 @@
 
 local pipeline that gives you a text summary of a YouTube video.
 
-`summarize.sh` does this end to end:
+`summarize.sh` does the following:
 
 1. Downloads YouTube audio using `yt-dlp`
 2. Splits audio into chunks with `ffmpeg`
