@@ -1,9 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# summarize.sh — YouTube -> FLAC -> 1-min chunks -> voxmlx transcript -> LM Studio summary
-# macOS-friendly (Bash 3.2 compatible)
-
 # ---- config (override via env) ----
 LM_HOST="${LM_HOST:-localhost}"
 LM_PORT="${LM_PORT:-5432}"
@@ -13,6 +10,11 @@ MAX_OUTPUT_TOKENS="${MAX_OUTPUT_TOKENS:-600}"
 TEMPERATURE="${TEMPERATURE:-0.2}"
 KEEP_WORKDIR="${KEEP_WORKDIR:-0}" # set to 1 to keep temp files always
 LM_API_TOKEN="${LM_API_TOKEN:-}"  # optional
+
+# Metadata controls (optional)
+INCLUDE_DESCRIPTION="${INCLUDE_DESCRIPTION:-1}"  # 1 = include video description in prompt
+INCLUDE_TAGS="${INCLUDE_TAGS:-1}"               # 1 = include tags/categories in prompt
+INCLUDE_CHAPTERS="${INCLUDE_CHAPTERS:-1}"       # 1 = include chapters (if present) in prompt
 
 # ---- helpers ----
 say() { printf "[%s] %s\n" "$(date +%H:%M:%S)" "$*"; }
@@ -39,7 +41,7 @@ run_quiet() {
 
 # ---- args ----
 URL="${1:-}"
-[[ -n "$URL" ]] || die $'Usage: ./summarize.sh "https://www.youtube.com/watch?v=..."\n\nOptional env:\n  LM_HOST=localhost LM_PORT=5432 LM_MODEL=liquid/lfm2.5-1.2b\n  CHUNK_SECONDS=60 KEEP_WORKDIR=0\n  LM_API_TOKEN=... (if your LM Studio server requires auth)'
+[[ -n "$URL" ]] || die $'Usage: ./summarize.sh "https://www.youtube.com/watch?v=..."\n\nOptional env:\n  LM_HOST=localhost LM_PORT=5432 LM_MODEL=liquid/lfm2.5-1.2b\n  CHUNK_SECONDS=60 KEEP_WORKDIR=0\n  LM_API_TOKEN=... (if your LM Studio server requires auth)\n\nMetadata env:\n  INCLUDE_DESCRIPTION=1 INCLUDE_TAGS=1 INCLUDE_CHAPTERS=1'
 
 # ---- deps ----
 need yt-dlp
@@ -72,6 +74,49 @@ cleanup() {
 trap cleanup EXIT
 
 say "Workdir: $WORKDIR"
+
+# ---- NEW: fetch metadata up front ----
+META_JSON="$WORKDIR/meta.json"
+META_LOG="$LOGDIR/yt-dlp-meta.log"
+
+run_quiet "Fetching video metadata..." "$META_LOG" \
+  yt-dlp \
+    --no-progress \
+    --dump-single-json \
+    --no-warnings \
+    --restrict-filenames \
+    "$URL"
+
+# Note: run_quiet redirects stdout to log, so we need to write JSON to file explicitly.
+# Do a second call that writes to file (still quiet):
+run_quiet "Saving metadata JSON..." "$META_LOG" \
+  bash -c "yt-dlp --no-progress --dump-single-json --no-warnings --restrict-filenames \"$URL\" >\"$META_JSON\""
+
+# ---- extract metadata fields ----
+TITLE="$(jq -r '.title // empty' "$META_JSON")"
+CHANNEL="$(jq -r '.channel // .uploader // empty' "$META_JSON")"
+CHANNEL_ID="$(jq -r '.channel_id // .uploader_id // empty' "$META_JSON")"
+WEBPAGE_URL="$(jq -r '.webpage_url // empty' "$META_JSON")"
+UPLOAD_DATE="$(jq -r '.upload_date // empty' "$META_JSON")"        # YYYYMMDD
+DURATION="$(jq -r '.duration // empty' "$META_JSON")"              # seconds
+LANGUAGE="$(jq -r '.language // empty' "$META_JSON")"
+DESCRIPTION="$(jq -r '.description // empty' "$META_JSON")"
+TAGS_CSV="$(jq -r '(.tags // []) | join(", ")' "$META_JSON")"
+CATEGORIES_CSV="$(jq -r '(.categories // []) | join(", ")' "$META_JSON")"
+
+# Chapters (optional)
+CHAPTERS=""
+if [[ "$INCLUDE_CHAPTERS" == "1" ]]; then
+  CHAPTERS="$(jq -r '
+    if (.chapters // []) | length > 0 then
+      (.chapters
+        | map("- " + (.title // "Untitled") + " (" + ((.start_time // 0)|tostring) + "s–" + ((.end_time // 0)|tostring) + "s)")
+        | join("\n"))
+    else
+      ""
+    end
+  ' "$META_JSON")"
+fi
 
 # ---- download audio as FLAC (force into WORKDIR) ----
 DL_LOG="$LOGDIR/yt-dlp.log"
@@ -147,15 +192,52 @@ done <"$CHUNK_LIST"
 # ---- summarize with LM Studio REST API v1 ----
 say "Summarizing with LM Studio (model: ${LM_MODEL})..."
 
-PROMPT_SYSTEM=$'You are an expert content summarizer.\n\nRules:\n- Output ONLY the summary text (no preamble, no labels, no formatting markers).\n- Write in clear, neutral, informative prose suitable for a YouTube video description or article summary.\n- Faithfully represent the transcript; do not invent details or opinions.\n- Capture the main topic, key arguments, examples, and conclusions presented in the video.\n- Adapt the length of the summary to the length and density of the transcript:\n  - Short transcripts → concise paragraph(s).\n  - Long or detailed transcripts → longer, more detailed multi-paragraph summary.\n- Preserve the logical flow of the video (what is introduced first, how it develops, how it concludes).\n- Avoid filler, repetition, timestamps, speaker names, or meta commentary.\n- If transcript quality is poor or incomplete, briefly note that and summarize only what is clear.\n\nThe summary should read like a high-quality video description or article abstract that allows someone to understand the full content without watching the video.'
-PROMPT_USER="Summarize the following transcript:\n\n$(cat "$ALL_TXT")"
+PROMPT_SYSTEM=$'You are an expert content summarizer.\n\nGoal:\nCreate a detailed, evidence-based summary that makes the video unnecessary to watch.\n\nRules:\n- Output ONLY the summary text (no preamble, no labels, no markdown symbols).\n- Do not invent details. Use METADATA only for context.\n\nRequired content:\n- A concise 2–3 sentence overview.\n- Then list 8–15 key points, each with at least one concrete supporting detail from the transcript (a specific example, number, comparison, test outcome, policy detail, or quote-like paraphrase).\n- Include pricing/plan terms/specs if mentioned.\n- Include what was tested or demonstrated and what the observed outcome was.\n- Include the final conclusion and any caveats.\n\nAnti-vagueness constraint:\n- Do not use generic phrases (“talks about”, “covers”, “explores”) unless you immediately specify what exactly was said/done and what happened.\n\nIf transcript is incomplete or noisy, briefly note that and only summarize what is clear.\n\nYou will receive:\n1) METADATA\n2) TRANSCRIPT\n\nWrite the summary now.'
+PROMPT_SYSTEM2=$'You are an expert content summarizer.\n\nRules:\n- Output ONLY the summary text (no preamble, no labels, no formatting markers).\n- Write in clear, neutral, informative prose suitable for a YouTube video description or article abstract.\n- Use the provided METADATA only as context (e.g., correct title/channel naming, topic framing, disambiguation).\n- Do NOT treat metadata as transcript content.\n- Do NOT invent details; if something is not supported by the transcript (or clearly by the description), omit it.\n- Capture the main topic, key arguments, examples, and conclusions presented in the video.\n- Adapt the length of the summary to the length and density of the transcript.\n- Preserve the logical flow of the video.\n- Avoid filler, repetition, timestamps, speaker names, or meta commentary.\n- If transcript quality is poor or incomplete, briefly note that and summarize only what is clear.\n\nYou will receive:\n1) METADATA (title/channel/date/duration/description/tags/chapters/etc.)\n2) TRANSCRIPT (chunked)\n\nWrite a high-quality summary that allows someone to understand the full content without watching the video.'
+
+# Build user prompt with a metadata header
+META_BLOCK="METADATA
+Title: ${TITLE}
+Channel: ${CHANNEL}
+Channel ID: ${CHANNEL_ID}
+URL: ${WEBPAGE_URL:-$URL}
+Upload date: ${UPLOAD_DATE}
+Duration (seconds): ${DURATION}
+Language: ${LANGUAGE}
+"
+
+if [[ "$INCLUDE_TAGS" == "1" ]]; then
+  META_BLOCK="${META_BLOCK}Categories: ${CATEGORIES_CSV}
+Tags: ${TAGS_CSV}
+"
+fi
+
+if [[ "$INCLUDE_CHAPTERS" == "1" && -n "${CHAPTERS:-}" ]]; then
+  META_BLOCK="${META_BLOCK}Chapters:
+${CHAPTERS}
+
+"
+fi
+
+if [[ "$INCLUDE_DESCRIPTION" == "1" && -n "${DESCRIPTION:-}" ]]; then
+  META_BLOCK="${META_BLOCK}Description:
+${DESCRIPTION}
+
+"
+fi
+
+PROMPT_USER="$(cat <<EOF
+${META_BLOCK}
+TRANSCRIPT
+$(cat "$ALL_TXT")
+EOF
+)"
 
 REQ_JSON="$WORKDIR/request.json"
 RESP_JSON="$WORKDIR/response.json"
 LM_LOG="$LOGDIR/lmstudio.log"
 
-# IMPORTANT FIX:
-# Use system_prompt + input as a single string (no input array with type:"message")
+# Use system_prompt + input as a single string
 jq -n \
   --arg model "$LM_MODEL" \
   --arg system_prompt "$PROMPT_SYSTEM" \
@@ -198,4 +280,4 @@ if [[ -z "$SUMMARY" ]]; then
   die $'LM Studio response had no output message.\nWorkdir kept at:\n  '"$WORKDIR"
 fi
 
-printf "%s\n" "$SUMMARY"
+printf "\n\n%s\n\n" "$SUMMARY"
