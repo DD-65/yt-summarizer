@@ -40,8 +40,32 @@ run_quiet() {
 }
 
 # ---- args ----
-URL="${1:-}"
-[[ -n "$URL" ]] || die $'Usage: ./summarize.sh "https://www.youtube.com/watch?v=..."\n\nOptional env:\n  LM_HOST=localhost LM_PORT=5432 LM_MODEL=liquid/lfm2.5-1.2b\n  CHUNK_SECONDS=60 KEEP_WORKDIR=0\n  LM_API_TOKEN=... (if your LM Studio server requires auth)\n\nMetadata env:\n  INCLUDE_DESCRIPTION=1 INCLUDE_TAGS=1 INCLUDE_CHAPTERS=1'
+QA_MODE=0
+URL=""
+
+while (($#)); do
+  case "$1" in
+    -qa)
+      QA_MODE=1
+      shift
+      ;;
+    -h|--help)
+      die $'Usage: ./summarize.sh [-qa] "https://www.youtube.com/watch?v=..."\n\nOptional env:\n  LM_HOST=localhost LM_PORT=5432 LM_MODEL=liquid/lfm2.5-1.2b\n  CHUNK_SECONDS=60 KEEP_WORKDIR=0\n  LM_API_TOKEN=... (if your LM Studio server requires auth)\n\nMetadata env:\n  INCLUDE_DESCRIPTION=1 INCLUDE_TAGS=1 INCLUDE_CHAPTERS=1'
+      ;;
+    -*)
+      die "Unknown flag: $1"
+      ;;
+    *)
+      if [[ -n "$URL" ]]; then
+        die "Unexpected extra argument: $1"
+      fi
+      URL="$1"
+      shift
+      ;;
+  esac
+done
+
+[[ -n "$URL" ]] || die $'Usage: ./summarize.sh [-qa] "https://www.youtube.com/watch?v=..."\n\nOptional env:\n  LM_HOST=localhost LM_PORT=5432 LM_MODEL=liquid/lfm2.5-1.2b\n  CHUNK_SECONDS=60 KEEP_WORKDIR=0\n  LM_API_TOKEN=... (if your LM Studio server requires auth)\n\nMetadata env:\n  INCLUDE_DESCRIPTION=1 INCLUDE_TAGS=1 INCLUDE_CHAPTERS=1'
 
 # ---- deps ----
 need yt-dlp
@@ -281,3 +305,79 @@ if [[ -z "$SUMMARY" ]]; then
 fi
 
 printf "\n\n%s\n\n" "$SUMMARY"
+
+if [[ "$QA_MODE" == "1" ]]; then
+  say "Q&A mode enabled. Ask questions about the video."
+  say "Press Enter on an empty line, or type 'exit'/'quit' to stop."
+
+  QA_SYSTEM_PROMPT=$'You are a precise Q&A assistant for a single YouTube video.\n\nRules:\n- Answer using ONLY the provided METADATA and TRANSCRIPT context.\n- If the answer is not in context, say so clearly and briefly.\n- Prefer concise, direct answers.\n- Do not invent details.\n- If relevant, mention uncertainty when transcript quality is noisy/incomplete.'
+  QA_HISTORY=""
+  QA_REQ_JSON="$WORKDIR/request_qa.json"
+  QA_RESP_JSON="$WORKDIR/response_qa.json"
+  QA_LOG="$LOGDIR/lmstudio-qa.log"
+
+  while true; do
+    printf "Q> "
+    IFS= read -r QA_QUESTION || break
+    if [[ -z "${QA_QUESTION// }" ]]; then
+      break
+    fi
+    QA_QUESTION_LOWER="$(printf "%s" "$QA_QUESTION" | tr '[:upper:]' '[:lower:]')"
+    case "$QA_QUESTION_LOWER" in
+      exit|quit)
+        break
+        ;;
+    esac
+
+    QA_INPUT="$(cat <<EOF
+${META_BLOCK}
+TRANSCRIPT
+$(cat "$ALL_TXT")
+
+${QA_HISTORY}User question: ${QA_QUESTION}
+EOF
+)"
+
+    jq -n \
+      --arg model "$LM_MODEL" \
+      --arg system_prompt "$QA_SYSTEM_PROMPT" \
+      --arg input "$QA_INPUT" \
+      --argjson temperature "$TEMPERATURE" \
+      --argjson max_output_tokens "$MAX_OUTPUT_TOKENS" \
+      '{
+        model: $model,
+        system_prompt: $system_prompt,
+        input: $input,
+        temperature: $temperature,
+        max_output_tokens: $max_output_tokens,
+        stream: false,
+        store: false
+      }' >"$QA_REQ_JSON"
+
+    if ! curl -sS "${HDR[@]}" \
+      "http://${LM_HOST}:${LM_PORT}/api/v1/chat" \
+      -d @"$QA_REQ_JSON" >"$QA_RESP_JSON" 2>"$QA_LOG"; then
+      printf "\n--- LM Studio Q&A request failed ---\nLog: %s\n\n" "$QA_LOG" >&2
+      tail -n 200 "$QA_LOG" >&2 || true
+      exit 1
+    fi
+
+    QA_ANSWER="$(jq -r '
+      (.output // [])
+      | map(select(.type=="message") | .content)
+      | .[0] // empty
+    ' "$QA_RESP_JSON")"
+
+    if [[ -z "$QA_ANSWER" ]]; then
+      ERRMSG="$(jq -r '.error?.message // .message // .detail // empty' "$QA_RESP_JSON")"
+      [[ -n "$ERRMSG" ]] && die $'LM Studio returned a Q&A error:\n'"$ERRMSG"$'\n\nWorkdir kept at:\n  '"$WORKDIR"
+      die $'LM Studio Q&A response had no output message.\nWorkdir kept at:\n  '"$WORKDIR"
+    fi
+
+    printf "\n%s\n\n" "$QA_ANSWER"
+
+    QA_HISTORY="${QA_HISTORY}User: ${QA_QUESTION}
+Assistant: ${QA_ANSWER}
+"
+  done
+fi

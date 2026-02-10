@@ -24,6 +24,12 @@ local pipeline that gives you a text summary of a YouTube video.
 ./summarize.sh "https://www.youtube.com/watch?v=..."
 ```
 
+Q&A mode (runs summary first, then opens an interactive Q&A loop over the same transcript context):
+
+```bash
+./summarize.sh -qa "https://www.youtube.com/watch?v=..."
+```
+
 Optional environment variables (set to the standard values I use):
 
 ```bash
