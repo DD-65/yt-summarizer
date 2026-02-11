@@ -50,7 +50,7 @@ LM_API_TOKEN=
 
 ## Example output (with -qa flag):
 ```
-./summarize.sh -qa https://youtu.be/[video]            
+$ ./summarize.sh -qa https://youtu.be/[video]            
 [15:18:38] Workdir: [directory]
 [15:18:38] Fetching video metadata...
 [15:18:40] Saving metadata JSON...
