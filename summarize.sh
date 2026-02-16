@@ -10,6 +10,8 @@ MAX_OUTPUT_TOKENS="${MAX_OUTPUT_TOKENS:-2000}"
 TEMPERATURE="${TEMPERATURE:-0.2}"
 KEEP_WORKDIR="${KEEP_WORKDIR:-0}" # set to 1 to keep temp files always
 LM_API_TOKEN="${LM_API_TOKEN:-}"  # optional
+CACHE_DIR="${CACHE_DIR:-$HOME/.cache/yt-summarizer}"
+REFRESH_CACHE="${REFRESH_CACHE:-0}" # set to 1 to ignore transcript cache and rebuild
 
 # Metadata controls (optional)
 INCLUDE_DESCRIPTION="${INCLUDE_DESCRIPTION:-1}"  # 1 = include video description in prompt
@@ -50,7 +52,7 @@ while (($#)); do
       shift
       ;;
     -h|--help)
-      die $'Usage: ./summarize.sh [-qa] "https://www.youtube.com/watch?v=..."\n\nOptional env:\n  LM_HOST=localhost LM_PORT=5432 LM_MODEL=liquid/lfm2.5-1.2b\n  CHUNK_SECONDS=60 KEEP_WORKDIR=0\n  LM_API_TOKEN=... (if your LM Studio server requires auth)\n\nMetadata env:\n  INCLUDE_DESCRIPTION=1 INCLUDE_TAGS=1 INCLUDE_CHAPTERS=1'
+      die $'Usage: ./summarize.sh [-qa] "https://www.youtube.com/watch?v=..."\n\nOptional env:\n  LM_HOST=localhost LM_PORT=5432 LM_MODEL=liquid/lfm2.5-1.2b\n  CHUNK_SECONDS=60 KEEP_WORKDIR=0\n  LM_API_TOKEN=... (if your LM Studio server requires auth)\n  CACHE_DIR=~/.cache/yt-summarizer REFRESH_CACHE=0\n\nMetadata env:\n  INCLUDE_DESCRIPTION=1 INCLUDE_TAGS=1 INCLUDE_CHAPTERS=1'
       ;;
     -*)
       die "Unknown flag: $1"
@@ -65,7 +67,7 @@ while (($#)); do
   esac
 done
 
-[[ -n "$URL" ]] || die $'Usage: ./summarize.sh [-qa] "https://www.youtube.com/watch?v=..."\n\nOptional env:\n  LM_HOST=localhost LM_PORT=5432 LM_MODEL=liquid/lfm2.5-1.2b\n  CHUNK_SECONDS=60 KEEP_WORKDIR=0\n  LM_API_TOKEN=... (if your LM Studio server requires auth)\n\nMetadata env:\n  INCLUDE_DESCRIPTION=1 INCLUDE_TAGS=1 INCLUDE_CHAPTERS=1'
+[[ -n "$URL" ]] || die $'Usage: ./summarize.sh [-qa] "https://www.youtube.com/watch?v=..."\n\nOptional env:\n  LM_HOST=localhost LM_PORT=5432 LM_MODEL=liquid/lfm2.5-1.2b\n  CHUNK_SECONDS=60 KEEP_WORKDIR=0\n  LM_API_TOKEN=... (if your LM Studio server requires auth)\n  CACHE_DIR=~/.cache/yt-summarizer REFRESH_CACHE=0\n\nMetadata env:\n  INCLUDE_DESCRIPTION=1 INCLUDE_TAGS=1 INCLUDE_CHAPTERS=1'
 
 # ---- deps ----
 need yt-dlp
@@ -142,76 +144,99 @@ if [[ "$INCLUDE_CHAPTERS" == "1" ]]; then
   ' "$META_JSON")"
 fi
 
-# ---- download audio as FLAC (force into WORKDIR) ----
-DL_LOG="$LOGDIR/yt-dlp.log"
-
-run_quiet "Downloading + extracting audio (FLAC)..." "$DL_LOG" \
-  yt-dlp \
-    --no-progress \
-    -P "home:$WORKDIR" -P "temp:$WORKDIR" \
-    -x --audio-format flac --audio-quality 0 \
-    --restrict-filenames \
-    -o "$WORKDIR/%(title)s.%(ext)s" \
-    "$URL"
-
-AUDIO_FILE="$(find "$WORKDIR" -maxdepth 1 -type f -name '*.flac' ! -name '*.part' -print | head -n 1 || true)"
-[[ -n "${AUDIO_FILE:-}" ]] || die "Could not find downloaded .flac in $WORKDIR (see $DL_LOG)"
-say "Downloaded: $(basename "$AUDIO_FILE")"
-
-# ---- split into 1-minute segments ----
-CHUNK_DIR="$WORKDIR/chunks"
-mkdir -p "$CHUNK_DIR"
-SPLIT_LOG="$LOGDIR/ffmpeg-split.log"
-
-# ---- split into chunks as WAV PCM (most compatible) ----
-run_quiet "Splitting into ${CHUNK_SECONDS}s chunks..." "$SPLIT_LOG" \
-  ffmpeg -hide_banner -nostdin -y -i "$AUDIO_FILE" \
-    -ar 16000 -ac 1 \
-    -f segment -segment_time "$CHUNK_SECONDS" -reset_timestamps 1 \
-    -c:a pcm_s16le \
-    "$CHUNK_DIR/seg_%04d.wav"
-
-CHUNK_LIST="$WORKDIR/chunk_list.txt"
-ls -1 "$CHUNK_DIR"/seg_*.wav 2>/dev/null >"$CHUNK_LIST" || true
-NUM_CHUNKS="$(wc -l <"$CHUNK_LIST" | tr -d ' ')"
-[[ "$NUM_CHUNKS" -gt 0 ]] || die "No chunks created (see $SPLIT_LOG)"
-say "Chunks: $NUM_CHUNKS"
-
-# ---- activate conda env + transcribe ----
-say "Activating conda env: voxmlx"
-CONDA_BASE="$(conda info --base 2>/dev/null || true)"
-[[ -n "${CONDA_BASE:-}" && -f "$CONDA_BASE/etc/profile.d/conda.sh" ]] || die "Cannot locate conda.sh (conda info --base failed?)"
-# shellcheck disable=SC1090
-source "$CONDA_BASE/etc/profile.d/conda.sh"
-conda activate voxmlx >/dev/null 2>&1 || die "Failed: conda activate voxmlx"
-
-need voxmlx
-
-TX_DIR="$WORKDIR/transcripts"
-mkdir -p "$TX_DIR"
+# ---- transcript cache ----
 ALL_TXT="$WORKDIR/transcript_full.txt"
-: >"$ALL_TXT"
+VIDEO_ID="$(jq -r '.id // empty' "$META_JSON")"
+if [[ -z "${VIDEO_ID:-}" ]]; then
+  VIDEO_ID_SOURCE="${WEBPAGE_URL:-$URL}"
+  VIDEO_ID="$(printf "%s" "$VIDEO_ID_SOURCE" | tr -c '[:alnum:]' '_' | sed 's/^_*//; s/_*$//' | cut -c1-120)"
+fi
+[[ -n "${VIDEO_ID:-}" ]] || VIDEO_ID="video"
 
-say "Transcribing chunks with voxmlx..."
-i=0
-while IFS= read -r chunk; do
-  i=$((i+1))
-  out_txt="$TX_DIR/seg_$(printf "%04d" $((i-1))).txt"
-  tlog="$LOGDIR/voxmlx_$(printf "%04d" $((i-1))).log"
+CACHE_TX_DIR="$CACHE_DIR/transcripts"
+mkdir -p "$CACHE_TX_DIR"
+CACHE_TXT="$CACHE_TX_DIR/${VIDEO_ID}_chunk${CHUNK_SECONDS}.txt"
+USE_TRANSCRIPT_CACHE=0
+if [[ "$REFRESH_CACHE" != "1" && -s "$CACHE_TXT" ]]; then
+  say "Using cached transcript: $CACHE_TXT"
+  cp "$CACHE_TXT" "$ALL_TXT"
+  USE_TRANSCRIPT_CACHE=1
+fi
 
-  say "  [$i/$NUM_CHUNKS] $(basename "$chunk")"
-  if ! voxmlx --audio "$chunk" >"$out_txt" 2>"$tlog"; then
-    printf "\n--- voxmlx failed on %s ---\nLog: %s\n\n" "$(basename "$chunk")" "$tlog" >&2
-    tail -n 200 "$tlog" >&2 || true
-    exit 1
-  fi
+if [[ "$USE_TRANSCRIPT_CACHE" != "1" ]]; then
+  # ---- download audio as FLAC (force into WORKDIR) ----
+  DL_LOG="$LOGDIR/yt-dlp.log"
 
-  {
-    echo "----- CHUNK $i / $NUM_CHUNKS : $(basename "$chunk") -----"
-    cat "$out_txt"
-    echo
-  } >>"$ALL_TXT"
-done <"$CHUNK_LIST"
+  run_quiet "Downloading + extracting audio (FLAC)..." "$DL_LOG" \
+    yt-dlp \
+      --no-progress \
+      -P "home:$WORKDIR" -P "temp:$WORKDIR" \
+      -x --audio-format flac --audio-quality 0 \
+      --restrict-filenames \
+      -o "$WORKDIR/%(title)s.%(ext)s" \
+      "$URL"
+
+  AUDIO_FILE="$(find "$WORKDIR" -maxdepth 1 -type f -name '*.flac' ! -name '*.part' -print | head -n 1 || true)"
+  [[ -n "${AUDIO_FILE:-}" ]] || die "Could not find downloaded .flac in $WORKDIR (see $DL_LOG)"
+  say "Downloaded: $(basename "$AUDIO_FILE")"
+
+  # ---- split into 1-minute segments ----
+  CHUNK_DIR="$WORKDIR/chunks"
+  mkdir -p "$CHUNK_DIR"
+  SPLIT_LOG="$LOGDIR/ffmpeg-split.log"
+
+  # ---- split into chunks as WAV PCM (most compatible) ----
+  run_quiet "Splitting into ${CHUNK_SECONDS}s chunks..." "$SPLIT_LOG" \
+    ffmpeg -hide_banner -nostdin -y -i "$AUDIO_FILE" \
+      -ar 16000 -ac 1 \
+      -f segment -segment_time "$CHUNK_SECONDS" -reset_timestamps 1 \
+      -c:a pcm_s16le \
+      "$CHUNK_DIR/seg_%04d.wav"
+
+  CHUNK_LIST="$WORKDIR/chunk_list.txt"
+  ls -1 "$CHUNK_DIR"/seg_*.wav 2>/dev/null >"$CHUNK_LIST" || true
+  NUM_CHUNKS="$(wc -l <"$CHUNK_LIST" | tr -d ' ')"
+  [[ "$NUM_CHUNKS" -gt 0 ]] || die "No chunks created (see $SPLIT_LOG)"
+  say "Chunks: $NUM_CHUNKS"
+
+  # ---- activate conda env + transcribe ----
+  say "Activating conda env: voxmlx"
+  CONDA_BASE="$(conda info --base 2>/dev/null || true)"
+  [[ -n "${CONDA_BASE:-}" && -f "$CONDA_BASE/etc/profile.d/conda.sh" ]] || die "Cannot locate conda.sh (conda info --base failed?)"
+  # shellcheck disable=SC1090
+  source "$CONDA_BASE/etc/profile.d/conda.sh"
+  conda activate voxmlx >/dev/null 2>&1 || die "Failed: conda activate voxmlx"
+
+  need voxmlx
+
+  TX_DIR="$WORKDIR/transcripts"
+  mkdir -p "$TX_DIR"
+  : >"$ALL_TXT"
+
+  say "Transcribing chunks with voxmlx..."
+  i=0
+  while IFS= read -r chunk; do
+    i=$((i+1))
+    out_txt="$TX_DIR/seg_$(printf "%04d" $((i-1))).txt"
+    tlog="$LOGDIR/voxmlx_$(printf "%04d" $((i-1))).log"
+
+    say "  [$i/$NUM_CHUNKS] $(basename "$chunk")"
+    if ! voxmlx --audio "$chunk" >"$out_txt" 2>"$tlog"; then
+      printf "\n--- voxmlx failed on %s ---\nLog: %s\n\n" "$(basename "$chunk")" "$tlog" >&2
+      tail -n 200 "$tlog" >&2 || true
+      exit 1
+    fi
+
+    {
+      echo "----- CHUNK $i / $NUM_CHUNKS : $(basename "$chunk") -----"
+      cat "$out_txt"
+      echo
+    } >>"$ALL_TXT"
+  done <"$CHUNK_LIST"
+
+  cp "$ALL_TXT" "$CACHE_TXT"
+  say "Saved transcript cache: $CACHE_TXT"
+fi
 
 # ---- summarize with LM Studio REST API v1 ----
 say "Summarizing with LM Studio (model: ${LM_MODEL})"
