@@ -310,7 +310,7 @@ if [[ "$QA_MODE" == "1" ]]; then
   say "Q&A mode enabled. Ask questions about the video."
   say "Press Enter on an empty line, or type 'exit'/'quit' to stop."
 
-  QA_SYSTEM_PROMPT=$'You are a precise Q&A assistant for a single YouTube video.\n\nRules:\n- Answer using ONLY the provided METADATA and TRANSCRIPT context.\n- If the answer is not in context, say so clearly and briefly.\n- Prefer concise, direct answers.\n- Do not invent details.\n- If relevant, mention uncertainty when transcript quality is noisy/incomplete.'
+  QA_SYSTEM_PROMPT=$'You are a precise Q&A assistant for a single YouTube video.\n\nRules:\n- Use ONLY the provided METADATA and TRANSCRIPT context.\n- Answer only the current question (1-2 sentences by default).\n- For follow-ups, provide only new relevant information; do not recap prior conclusions unless explicitly asked.\n- For what/which/how/why/list questions: do NOT start with "Yes/No".\n- Only use Yes/No when the user asked a direct yes/no question.\n- Include one concrete detail when available.\n- If a detail is not explicitly in context, say so briefly.\n- Do not invent details or speculate.\n- If relevant, mention uncertainty when transcript quality is noisy/incomplete.'
   QA_HISTORY=""
   QA_REQ_JSON="$WORKDIR/request_qa.json"
   QA_RESP_JSON="$WORKDIR/response_qa.json"
@@ -376,8 +376,7 @@ EOF
 
     printf "\n%s\n\n" "$QA_ANSWER"
 
-    QA_HISTORY="${QA_HISTORY}User: ${QA_QUESTION}
-Assistant: ${QA_ANSWER}
+    QA_HISTORY="${QA_HISTORY}Previous user question: ${QA_QUESTION}
 "
   done
 fi
