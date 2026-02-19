@@ -16,7 +16,7 @@ local pipeline that gives you a text summary of a YouTube video.
 - `curl`
 - `jq`
 - `conda` with a `voxmlx` environment
-- `voxmlx` (CLI)[https://github.com/awni/voxmlx] installed & available
+- `voxmlx` [CLI](https://github.com/awni/voxmlx) installed & available
 - LM Studio server running and reachable
 
 ## Usage
