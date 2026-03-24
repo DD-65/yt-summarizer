@@ -100,6 +100,9 @@ cleanup() {
 trap cleanup EXIT
 
 say "Workdir: $WORKDIR"
+if [[ -z "$LM_API_TOKEN" ]]; then
+  say "LM Studio API token: not set"
+fi
 
 # ---- NEW: fetch metadata up front ----
 META_JSON="$WORKDIR/meta.json"
