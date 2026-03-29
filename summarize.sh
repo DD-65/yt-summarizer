@@ -42,17 +42,17 @@ run_quiet() {
 }
 
 # ---- args ----
-QA_MODE=0
+QA_MODE=1
 URL=""
 
 while (($#)); do
   case "$1" in
     -qa)
-      QA_MODE=1
+      QA_MODE=0
       shift
       ;;
     -h|--help)
-      die $'Usage: ./summarize.sh [-qa] "https://www.youtube.com/watch?v=..."\n\nOptional env:\n  LM_HOST=localhost LM_PORT=5432 LM_MODEL=liquid/lfm2.5-1.2b\n  CHUNK_SECONDS=60 KEEP_WORKDIR=0\n  LM_API_TOKEN=... (if your LM Studio server requires auth)\n  CACHE_DIR=~/.cache/yt-summarizer REFRESH_CACHE=0\n\nMetadata env:\n  INCLUDE_DESCRIPTION=1 INCLUDE_TAGS=1 INCLUDE_CHAPTERS=1'
+      die $'Usage: ./summarize.sh [-qa] "https://www.youtube.com/watch?v=..."\n\nFlags:\n  -qa   Disable interactive Q&A mode after the summary\n\nOptional env:\n  LM_HOST=localhost LM_PORT=5432 LM_MODEL=liquid/lfm2.5-1.2b\n  CHUNK_SECONDS=60 KEEP_WORKDIR=0\n  LM_API_TOKEN=... (if your LM Studio server requires auth)\n  CACHE_DIR=~/.cache/yt-summarizer REFRESH_CACHE=0\n\nMetadata env:\n  INCLUDE_DESCRIPTION=1 INCLUDE_TAGS=1 INCLUDE_CHAPTERS=1'
       ;;
     -*)
       die "Unknown flag: $1"
@@ -67,7 +67,7 @@ while (($#)); do
   esac
 done
 
-[[ -n "$URL" ]] || die $'Usage: ./summarize.sh [-qa] "https://www.youtube.com/watch?v=..."\n\nOptional env:\n  LM_HOST=localhost LM_PORT=5432 LM_MODEL=liquid/lfm2.5-1.2b\n  CHUNK_SECONDS=60 KEEP_WORKDIR=0\n  LM_API_TOKEN=... (if your LM Studio server requires auth)\n  CACHE_DIR=~/.cache/yt-summarizer REFRESH_CACHE=0\n\nMetadata env:\n  INCLUDE_DESCRIPTION=1 INCLUDE_TAGS=1 INCLUDE_CHAPTERS=1'
+[[ -n "$URL" ]] || die $'Usage: ./summarize.sh [-qa] "https://www.youtube.com/watch?v=..."\n\nFlags:\n  -qa   Disable interactive Q&A mode after the summary\n\nOptional env:\n  LM_HOST=localhost LM_PORT=5432 LM_MODEL=liquid/lfm2.5-1.2b\n  CHUNK_SECONDS=60 KEEP_WORKDIR=0\n  LM_API_TOKEN=... (if your LM Studio server requires auth)\n  CACHE_DIR=~/.cache/yt-summarizer REFRESH_CACHE=0\n\nMetadata env:\n  INCLUDE_DESCRIPTION=1 INCLUDE_TAGS=1 INCLUDE_CHAPTERS=1'
 
 # ---- deps ----
 need yt-dlp

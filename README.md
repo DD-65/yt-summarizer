@@ -1,6 +1,6 @@
 # yt-summarizer
 
-local pipeline that gives you a text summary of a YouTube video.
+local pipeline that gives you a text summary of a YouTube video, then drops into interactive Q&A by default.
 
 `summarize.sh` does the following:
 
@@ -25,7 +25,7 @@ local pipeline that gives you a text summary of a YouTube video.
 ./summarize.sh "https://www.youtube.com/watch?v=..."
 ```
 
-Q&A mode (runs summary first, then opens an interactive Q&A loop over the same transcript context):
+Summary only (disables the default interactive Q&A loop):
 
 ```bash
 ./summarize.sh -qa "https://www.youtube.com/watch?v=..."
@@ -51,9 +51,9 @@ REFRESH_CACHE=0
 - `voxmlx`: https://github.com/awni/voxmlx
 - `yt-dlp`: https://github.com/yt-dlp/yt-dlp
 
-## Example output (with -qa flag):
+## Example output (default behavior):
 ```
-$ ./summarize.sh -qa https://youtu.be/[video]            
+$ ./summarize.sh https://youtu.be/[video]            
 [15:18:38] Workdir: [directory]
 [15:18:38] Fetching video metadata...
 [15:18:40] Saving metadata JSON...
