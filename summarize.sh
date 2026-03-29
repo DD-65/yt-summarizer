@@ -352,7 +352,7 @@ if [[ "$QA_MODE" == "1" ]]; then
     fi
     QA_QUESTION_LOWER="$(printf "%s" "$QA_QUESTION" | tr '[:upper:]' '[:lower:]')"
     case "$QA_QUESTION_LOWER" in
-      exit|quit)
+      exit|quit|/quit)
         break
         ;;
     esac
