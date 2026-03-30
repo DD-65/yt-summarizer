@@ -1,6 +1,6 @@
 # yt-summarizer
 
-local pipeline that gives you a text summary of a YouTube video, then drops into interactive Q&A by default.
+local pipeline that gives you a text summary of a YouTube video, and allows for interactive Q&A about the video content.
 
 `summarize.sh` does the following:
 
@@ -25,7 +25,7 @@ local pipeline that gives you a text summary of a YouTube video, then drops into
 ./summarize.sh "https://www.youtube.com/watch?v=..."
 ```
 
-Summary only (disables the default interactive Q&A loop):
+Summary only (disables the default Q&A loop):
 
 ```bash
 ./summarize.sh -qa "https://www.youtube.com/watch?v=..."
