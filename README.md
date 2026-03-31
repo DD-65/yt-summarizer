@@ -31,6 +31,12 @@ Summary only (disables the default Q&A loop):
 ./summarize.sh -qa "https://www.youtube.com/watch?v=..."
 ```
 
+Required environment variables:
+
+```bash
+LM_API_TOKEN=...
+```
+
 Optional environment variables (set to the standard values I use):
 
 ```bash
@@ -41,7 +47,6 @@ CHUNK_SECONDS=60
 MAX_OUTPUT_TOKENS=600
 TEMPERATURE=0.2
 KEEP_WORKDIR=0
-LM_API_TOKEN=
 CACHE_DIR=~/.cache/yt-summarizer
 REFRESH_CACHE=0
 ```
