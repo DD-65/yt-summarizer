@@ -203,7 +203,7 @@ if [[ "$USE_TRANSCRIPT_CACHE" != "1" ]]; then
   say "Chunks: $NUM_CHUNKS"
 
   # ---- activate conda env + transcribe ----
-  say "Activating conda env: voxmlx"
+  say "Activating conda env: $CONDAENV"
   CONDA_BASE="$(conda info --base 2>/dev/null || true)"
   [[ -n "${CONDA_BASE:-}" && -f "$CONDA_BASE/etc/profile.d/conda.sh" ]] || die "Cannot locate conda (conda info --base failed?)"
   # shellcheck disable=SC1090
