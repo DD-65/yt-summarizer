@@ -9,7 +9,7 @@ local pipeline that gives you a text summary of a YouTube video, and allows for 
 3. Transcribes the chunks locally using `voxmlx`
 4. Sends the transcript to a local model in LM Studio for a concise summary
 
-## Requirements (macOS only)
+## Requirements
 
 - `yt-dlp`
 - `ffmpeg`
@@ -18,6 +18,56 @@ local pipeline that gives you a text summary of a YouTube video, and allows for 
 - `conda` with a `voxmlx` environment
 - `voxmlx` [CLI](https://github.com/awni/voxmlx) installed & available
 - LM Studio server running and reachable
+
+## Installation
+
+macOS only.
+
+1. Clone the repo:
+
+```bash
+git clone https://github.com/DD-65/yt-summarizer
+cd yt-summarizer
+```
+
+2. Install system dependencies:
+
+```bash
+brew install yt-dlp ffmpeg jq
+```
+
+3. Install Conda if you do not already have it, then create the transcription environment:
+
+```bash
+conda create -n voxmlx python=3.11 -y
+conda activate voxmlx
+```
+
+4. Install the `voxmlx` CLI in that environment using the instructions from the [voxmlx repo](https://github.com/awni/voxmlx), and make sure `voxmlx` is callable on PATH afterwards.
+
+5. Start LM Studio and enable its local server. The script expects these defaults unless you override them:
+
+- Server hostname: `localhost`
+- Server port: `5432`
+- LLM used: `liquid/lfm2.5-1.2b`
+
+6. Set your LM Studio API token as an environment variable:
+
+```bash
+export LM_API_TOKEN=your_token_here
+```
+
+7. Verify the script:
+
+```bash
+./summarize.sh --help
+```
+
+8. Run it on a video:
+
+```bash
+./summarize.sh "https://www.youtube.com/watch?v=..."
+```
 
 ## Usage
 
