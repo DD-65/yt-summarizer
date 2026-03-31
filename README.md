@@ -40,6 +40,7 @@ LM_API_TOKEN=...
 Optional environment variables (set to the standard values I use):
 
 ```bash
+CONDAENV=voxmlx
 LM_HOST=localhost
 LM_PORT=5432
 LM_MODEL=liquid/lfm2.5-1.2b

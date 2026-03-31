@@ -2,6 +2,7 @@
 set -euo pipefail
 
 # ---- config (override via env) ----
+CONDAENV="${CONDAENV:-voxmlx}"
 LM_HOST="${LM_HOST:-localhost}"
 LM_PORT="${LM_PORT:-5432}"
 LM_MODEL="${LM_MODEL:-liquid/lfm2.5-1.2b}"
@@ -103,7 +104,7 @@ trap cleanup EXIT
 
 say "Workdir: $WORKDIR"
 
-# ---- NEW: fetch metadata up front ----
+# ---- fetch metadata up front ----
 META_JSON="$WORKDIR/meta.json"
 META_LOG="$LOGDIR/yt-dlp-meta.log"
 
@@ -166,7 +167,7 @@ if [[ "$REFRESH_CACHE" != "1" && -s "$CACHE_TXT" ]]; then
 fi
 
 if [[ "$USE_TRANSCRIPT_CACHE" != "1" ]]; then
-  # ---- download audio as FLAC (force into WORKDIR) ----
+  # ---- download audio as FLAC (into WORKDIR) ----
   DL_LOG="$LOGDIR/yt-dlp.log"
 
   run_quiet "Downloading + extracting audio (FLAC)..." "$DL_LOG" \
@@ -187,7 +188,7 @@ if [[ "$USE_TRANSCRIPT_CACHE" != "1" ]]; then
   mkdir -p "$CHUNK_DIR"
   SPLIT_LOG="$LOGDIR/ffmpeg-split.log"
 
-  # ---- split into chunks as WAV PCM (most compatible) ----
+  # ---- split into chunks as WAV ----
   run_quiet "Splitting into ${CHUNK_SECONDS}s chunks..." "$SPLIT_LOG" \
     ffmpeg -hide_banner -nostdin -y -i "$AUDIO_FILE" \
       -ar 16000 -ac 1 \
@@ -204,10 +205,10 @@ if [[ "$USE_TRANSCRIPT_CACHE" != "1" ]]; then
   # ---- activate conda env + transcribe ----
   say "Activating conda env: voxmlx"
   CONDA_BASE="$(conda info --base 2>/dev/null || true)"
-  [[ -n "${CONDA_BASE:-}" && -f "$CONDA_BASE/etc/profile.d/conda.sh" ]] || die "Cannot locate conda.sh (conda info --base failed?)"
+  [[ -n "${CONDA_BASE:-}" && -f "$CONDA_BASE/etc/profile.d/conda.sh" ]] || die "Cannot locate conda (conda info --base failed?)"
   # shellcheck disable=SC1090
   source "$CONDA_BASE/etc/profile.d/conda.sh"
-  conda activate voxmlx >/dev/null 2>&1 || die "Failed: conda activate voxmlx"
+  conda activate $CONDAENV >/dev/null 2>&1 || die "conda env activation for $CONDAENV failed"
 
   need voxmlx
 
