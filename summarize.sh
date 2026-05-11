@@ -20,7 +20,13 @@ INCLUDE_TAGS="${INCLUDE_TAGS:-1}"               # 1 = include tags/categories in
 INCLUDE_CHAPTERS="${INCLUDE_CHAPTERS:-1}"       # 1 = include chapters (if present) in prompt
 
 # ---- helpers ----
-say() { printf "[%s] %s\n" "$(date +%H:%M:%S)" "$*"; }
+say() {
+  if [[ "${TRANSCRIBE_ONLY:-0}" == "1" ]]; then
+    printf "[%s] %s\n" "$(date +%H:%M:%S)" "$*" >&2
+  else
+    printf "[%s] %s\n" "$(date +%H:%M:%S)" "$*"
+  fi
+}
 
 die() {
   # %b interprets \n etc
@@ -44,7 +50,9 @@ run_quiet() {
 
 # ---- args ----
 QA_MODE=1
+TRANSCRIBE_ONLY=0
 URL=""
+USAGE=$'Usage: ./summarize.sh [-qa] [-t] "https://www.youtube.com/watch?v=..."\n\nFlags:\n  -qa   Disable interactive Q&A mode after the summary\n  -t    Transcribe only; print transcript to stdout and skip LM Studio\n\nRequired env:\n  LM_API_TOKEN=...  (not required with -t)\n\nOptional env:\n  LM_HOST=localhost LM_PORT=5432 LM_MODEL=liquid/lfm2.5-1.2b\n  CHUNK_SECONDS=60 KEEP_WORKDIR=0\n  CACHE_DIR=~/.cache/yt-summarizer REFRESH_CACHE=0\n\nMetadata env:\n  INCLUDE_DESCRIPTION=1 INCLUDE_TAGS=1 INCLUDE_CHAPTERS=1'
 
 while (($#)); do
   case "$1" in
@@ -52,8 +60,13 @@ while (($#)); do
       QA_MODE=0
       shift
       ;;
+    -t)
+      TRANSCRIBE_ONLY=1
+      QA_MODE=0
+      shift
+      ;;
     -h|--help)
-      die $'Usage: ./summarize.sh [-qa] "https://www.youtube.com/watch?v=..."\n\nFlags:\n  -qa   Disable interactive Q&A mode after the summary\n\nRequired env:\n  LM_API_TOKEN=...\n\nOptional env:\n  LM_HOST=localhost LM_PORT=5432 LM_MODEL=liquid/lfm2.5-1.2b\n  CHUNK_SECONDS=60 KEEP_WORKDIR=0\n  CACHE_DIR=~/.cache/yt-summarizer REFRESH_CACHE=0\n\nMetadata env:\n  INCLUDE_DESCRIPTION=1 INCLUDE_TAGS=1 INCLUDE_CHAPTERS=1'
+      die "$USAGE"
       ;;
     -*)
       die "Unknown flag: $1"
@@ -68,16 +81,20 @@ while (($#)); do
   esac
 done
 
-[[ -n "$URL" ]] || die $'Usage: ./summarize.sh [-qa] "https://www.youtube.com/watch?v=..."\n\nFlags:\n  -qa   Disable interactive Q&A mode after the summary\n\nRequired env:\n  LM_API_TOKEN=...\n\nOptional env:\n  LM_HOST=localhost LM_PORT=5432 LM_MODEL=liquid/lfm2.5-1.2b\n  CHUNK_SECONDS=60 KEEP_WORKDIR=0\n  CACHE_DIR=~/.cache/yt-summarizer REFRESH_CACHE=0\n\nMetadata env:\n  INCLUDE_DESCRIPTION=1 INCLUDE_TAGS=1 INCLUDE_CHAPTERS=1'
+[[ -n "$URL" ]] || die "$USAGE"
 
-[[ -n "$LM_API_TOKEN" ]] || die "LM Studio API token is not set. Export LM_API_TOKEN before running summarize.sh."
+if [[ "$TRANSCRIBE_ONLY" != "1" ]]; then
+  [[ -n "$LM_API_TOKEN" ]] || die "LM Studio API token is not set. Export LM_API_TOKEN before running summarize.sh."
+fi
 
 # ---- deps ----
 need yt-dlp
 need ffmpeg
-need curl
 need jq
 need conda
+if [[ "$TRANSCRIBE_ONLY" != "1" ]]; then
+  need curl
+fi
 
 # ---- workspace ----
 WORKDIR="$(mktemp -d -t ytsum.XXXXXXXX)"
@@ -114,8 +131,10 @@ run_quiet "Fetching video metadata..." "$META_LOG" \
     --dump-single-json \
     --no-warnings \
     --restrict-filenames \
-    #--cookies /Users/daniel/yt-summarizer/cookies.txt \
     "$URL"
+
+# #--cookies /Users/daniel/yt-summarizer/cookies.txt \
+# can be used if youtube complains about ratelimits or similar
 
 # Note: run_quiet redirects stdout to log, so we need to write JSON to file explicitly.
 # Do a second call that writes to file (still quiet):
@@ -242,8 +261,13 @@ if [[ "$USE_TRANSCRIPT_CACHE" != "1" ]]; then
   say "Saved transcript cache: $CACHE_TXT"
 fi
 
-# ---- summarize with LM Studio REST API v1 ----
-say "Summarizing with LM Studio (model: ${LM_MODEL})"
+if [[ "$TRANSCRIBE_ONLY" == "1" ]]; then
+  cat "$ALL_TXT"
+  exit 0
+fi
+
+# ---- summarize with LLM ----
+say "Summarizing with ${LM_MODEL}"
 
 PROMPT_SYSTEM=$'You are an expert content summarizer.\n\nGoal:\nCreate a detailed, evidence-based summary that makes the video unnecessary to watch.\n\nRules:\n- Output ONLY the summary text (no preamble, no labels, no markdown symbols).\n- Do not invent details. Use METADATA only for context.\n\nRequired content:\n- A concise 2–3 sentence overview.\n- Then list 8–15 key points, each with at least one concrete supporting detail from the transcript (a specific example, number, comparison, test outcome, policy detail, or quote-like paraphrase).\n- Include pricing/plan terms/specs if mentioned.\n- Include what was tested or demonstrated and what the observed outcome was.\n- Include the final conclusion and any caveats.\n\nAnti-vagueness constraint:\n- Do not use generic phrases (“talks about”, “covers”, “explores”) unless you immediately specify what exactly was said/done and what happened.\n\nIf transcript is incomplete or noisy, briefly note that and only summarize what is clear.\n\nYou will receive:\n1) METADATA\n2) TRANSCRIPT\n\nWrite the summary now.'
 PROMPT_SYSTEM2=$'You are an expert content summarizer.\n\nRules:\n- Output ONLY the summary text (no preamble, no labels, no formatting markers).\n- Write in clear, neutral, informative prose suitable for a YouTube video description or article abstract.\n- Use the provided METADATA only as context (e.g., correct title/channel naming, topic framing, disambiguation).\n- Do NOT treat metadata as transcript content.\n- Do NOT invent details; if something is not supported by the transcript (or clearly by the description), omit it.\n- Capture the main topic, key arguments, examples, and conclusions presented in the video.\n- Adapt the length of the summary to the length and density of the transcript.\n- Preserve the logical flow of the video.\n- Avoid filler, repetition, timestamps, speaker names, or meta commentary.\n- If transcript quality is poor or incomplete, briefly note that and summarize only what is clear.\n\nYou will receive:\n1) METADATA (title/channel/date/duration/description/tags/chapters/etc.)\n2) TRANSCRIPT (chunked)\n\nWrite a high-quality summary that allows someone to understand the full content without watching the video.'

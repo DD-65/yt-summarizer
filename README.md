@@ -9,6 +9,8 @@ local pipeline that gives you a text summary of a YouTube video, and allows for 
 3. Transcribes the chunks locally using `voxmlx`
 4. Sends the transcript to a local model in LM Studio for a concise summary
 
+With `-t`, it stops after transcription and prints the transcript to stdout.
+
 ## Requirements
 
 - `yt-dlp`
@@ -81,11 +83,19 @@ Summary only (disables the default Q&A loop):
 ./summarize.sh -qa "https://www.youtube.com/watch?v=..."
 ```
 
+Transcription only (skips LM Studio and prints the transcript to stdout):
+
+```bash
+./summarize.sh -t "https://www.youtube.com/watch?v=..."
+```
+
 Required environment variables:
 
 ```bash
 LM_API_TOKEN=...
 ```
+
+`LM_API_TOKEN` is only required when generating a summary or using Q&A mode.
 
 Optional environment variables (set to the standard values I use):
 
