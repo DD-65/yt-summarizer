@@ -114,6 +114,7 @@ run_quiet "Fetching video metadata..." "$META_LOG" \
     --dump-single-json \
     --no-warnings \
     --restrict-filenames \
+    #--cookies /Users/daniel/yt-summarizer/cookies.txt \
     "$URL"
 
 # Note: run_quiet redirects stdout to log, so we need to write JSON to file explicitly.
