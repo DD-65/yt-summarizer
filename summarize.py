@@ -557,10 +557,13 @@ Rules:
 - Output only the summary text.
 - Use only the provided evidence brief and profile. Metadata is context only, not evidence.
 - Do not invent details. Omit unsupported claims.
+- Write a detailed summary, not a short abstract. For a normal video, aim for 2-4 substantial paragraphs or 8-12 detailed bullets, depending on what fits the content.
 - Include concrete details when they materially help: names, numbers, dates, settings, steps, examples, tests, results, recommendations, caveats, or quote-like paraphrases.
+- Include multiple concrete details across the summary when the evidence contains them; do not collapse the video into generic topic labels.
 - Do not mention categories of information that are absent.
 - Do not reveal internal workflow labels, prompt labels, schema field names, or reasoning scaffolds.
 - Do not add Pricing, Caveats, Policy, or similar sections just because the prompt mentions those concepts.
+- Do not give generic advice, warnings, buying advice, safety advice, legal advice, update advice, or best-practice recommendations unless the transcript evidence explicitly says the speaker recommended it.
 - Avoid generic phrases such as "talks about", "covers", or "explores" unless immediately followed by exactly what was said or demonstrated.
 - Distinguish demonstrated outcomes from potential risks or speculation.
 - If the transcript is incomplete or noisy, briefly say what is unclear and summarize only what is supported.
@@ -578,6 +581,7 @@ Rules:
 - Do not invent details or speculate.
 - Distinguish demonstrated outcomes from potential risks.
 - For follow-ups, use the prior Q&A only to resolve references; do not recap unless asked.
+- If the current question asks for a new distinction or condition, answer that distinction directly instead of repeating the prior answer.
 - Do not reveal internal workflow labels, prompt labels, schema field names, or reasoning scaffolds.
 - Do not mention absent categories such as missing pricing unless the user specifically asks whether that category was mentioned.
 """
@@ -856,6 +860,8 @@ def question_type(question: str) -> str:
     q = question.strip().lower()
     if re.search(r"\b(list|which|what items|all items|products|tools|names)\b", q):
         return "list"
+    if re.search(r"\b(need|needs|required|requirement|condition|conditions|look like|lookalike|for .* to occur|to happen|trigger|valid|validity|sufficient|enough)\b", q):
+        return "requirements"
     if re.search(r"\b(how exactly|how did|why|explain|mechanism|root cause|occur)\b", q):
         return "mechanism"
     if re.match(r"^(is|are|was|were|do|does|did|can|could|would|should|has|have|will)\b", q):
@@ -868,6 +874,31 @@ def question_type(question: str) -> str:
 def score_text(tokens: list[str], text: str) -> int:
     lower = text.lower()
     return sum(lower.count(token) for token in tokens)
+
+
+def note_search_text(note: dict[str, Any], qtype: str) -> str:
+    if qtype == "requirements":
+        priority = {
+            "specific_details": note.get("specific_details") or note.get("concrete_facts"),
+            "steps_or_sequence": note.get("steps_or_sequence") or note.get("mechanisms"),
+            "tests_or_examples": note.get("tests_or_examples") or note.get("tests_demos"),
+            "claims_vs_evidence": note.get("claims_vs_evidence"),
+            "uncertainties": note.get("uncertainties") or note.get("caveats_uncertainty"),
+        }
+        return json.dumps(priority, ensure_ascii=False) + "\n" + json.dumps(note, ensure_ascii=False)
+    return json.dumps(note, ensure_ascii=False)
+
+
+def retrieval_tokens(question: str, qtype: str) -> list[str]:
+    tokens = tokenize(question)
+    if qtype == "requirements":
+        tokens.extend([
+            "need", "needs", "required", "requirement", "condition", "conditions",
+            "valid", "invalid", "sufficient", "enough", "trigger", "occur",
+            "happen", "failed", "fails", "rejected", "reject", "attempt",
+            "structure", "structured", "format", "must", "only", "unless",
+        ])
+    return tokens
 
 
 def retrieve_context(
@@ -887,13 +918,13 @@ def retrieve_context(
     if qtype == "list" and broad_list_request:
         return notes, transcript_chunks[: cfg.qa_retrieval_chunks]
 
-    tokens = tokenize(question)
+    tokens = retrieval_tokens(question, qtype)
     if not tokens:
         return notes[: cfg.qa_retrieval_notes], transcript_chunks[: cfg.qa_retrieval_chunks]
 
     note_scores = []
     for idx, note in enumerate(notes):
-        text = json.dumps(note, ensure_ascii=False)
+        text = note_search_text(note, qtype)
         note_scores.append((score_text(tokens, text), idx, note))
     note_scores.sort(key=lambda item: (-item[0], item[1]))
     selected_notes = [item[2] for item in note_scores[: cfg.qa_retrieval_notes] if item[0] > 0]
@@ -902,7 +933,14 @@ def retrieve_context(
 
     chunk_scores = []
     for chunk in transcript_chunks:
-        chunk_scores.append((score_text(tokens, chunk.text), chunk.index, chunk))
+        score = score_text(tokens, chunk.text)
+        if qtype == "requirements" and re.search(
+            r"\b(need|required|condition|valid|invalid|sufficient|enough|trigger|failed|rejected|attempt|must|unless|only)\b",
+            chunk.text,
+            flags=re.IGNORECASE,
+        ):
+            score += 3
+        chunk_scores.append((score, chunk.index, chunk))
     chunk_scores.sort(key=lambda item: (-item[0], item[1]))
     selected_chunks = [item[2] for item in chunk_scores[: cfg.qa_retrieval_chunks] if item[0] > 0]
     if not selected_chunks:
@@ -915,6 +953,8 @@ def qa_style_instruction(qtype: str) -> str:
         return "The user wants a list. Do not start with Yes/No. Use concise bullets; include a short description or result for each item when available."
     if qtype == "mechanism":
         return "The user is asking how something works. Explain it in normal language from cause to effect, using the most relevant concrete details."
+    if qtype == "requirements":
+        return "The user is asking about requirements or conditions. Focus on what must be true, what is not sufficient by itself, and any failed attempts or constraints mentioned in the transcript."
     if qtype == "yes_no":
         return "The user asked a yes/no-style question. Start with Yes, No, or Not clear, then give the concrete reason."
     if qtype == "comparison":
@@ -997,6 +1037,7 @@ PRIOR Q&A
 {history_text if history_text else "(none)"}
 
 {qa_style_instruction(qtype)}
+{"Do not repeat the previous answer. The user is asking a follow-up, so answer the new distinction directly." if history_text else ""}
 
 Current user question: {question}
 """
