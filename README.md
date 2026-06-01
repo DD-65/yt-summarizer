@@ -2,12 +2,14 @@
 
 local pipeline that gives you a text summary of a YouTube video, and allows for interactive Q&A about the video content.
 
-`summarize.sh` does the following:
+`summarize.sh` delegates to `summarize.py`, which does the following:
 
 1. Downloads YouTube audio (& metadata) using `yt-dlp`
 2. Splits audio into chunks with `ffmpeg`
 3. Transcribes the chunks locally using `voxmlx`
-4. Sends the transcript to a local model in LM Studio for a concise summary
+4. Extracts structured evidence notes from transcript windows with LM Studio
+5. Classifies the video type and writes a final summary from the compact evidence notes
+6. Runs interactive Q&A with retrieval over the evidence notes and relevant transcript excerpts
 
 With `-t`, it stops after transcription and prints the transcript to stdout.
 
@@ -15,8 +17,7 @@ With `-t`, it stops after transcription and prints the transcript to stdout.
 
 - `yt-dlp`
 - `ffmpeg`
-- `curl`
-- `jq`
+- `python3`
 - `conda` with a `voxmlx` environment
 - `voxmlx` [CLI](https://github.com/awni/voxmlx) installed & available
 - LM Studio server running and reachable
@@ -35,7 +36,7 @@ cd yt-summarizer
 2. Install system dependencies:
 
 ```bash
-brew install yt-dlp ffmpeg jq
+brew install yt-dlp ffmpeg
 ```
 
 3. Install Conda if you do not already have it, then create the transcription environment:
@@ -110,6 +111,9 @@ TEMPERATURE=0.2
 KEEP_WORKDIR=0
 CACHE_DIR=~/.cache/yt-summarizer
 REFRESH_CACHE=0
+PIPELINE_WINDOW_CHUNKS=3
+QA_RETRIEVAL_NOTES=8
+QA_RETRIEVAL_CHUNKS=4
 ```
 
 ## Reference
