@@ -26,7 +26,7 @@ Required env:
   LM_API_TOKEN=...  (not required with -t)
 
 Optional env:
-  LM_HOST=localhost LM_PORT=5432 LM_MODEL=liquid/lfm2.5-1.2b
+  LM_HOST=localhost LM_PORT=5432 LM_MODEL=mellum2-12b-a2.5b-instruct
   CHUNK_SECONDS=60 KEEP_WORKDIR=0
   CACHE_DIR=~/.cache/yt-summarizer REFRESH_CACHE=0
 
@@ -114,7 +114,7 @@ def load_config() -> Config:
         condaenv=os.environ.get("CONDAENV", "voxmlx"),
         lm_host=os.environ.get("LM_HOST", "localhost"),
         lm_port=os.environ.get("LM_PORT", "5432"),
-        lm_model=os.environ.get("LM_MODEL", "liquid/lfm2.5-1.2b"),
+        lm_model=os.environ.get("LM_MODEL", "mellum2-12b-a2.5b-instruct"),
         chunk_seconds=env_int("CHUNK_SECONDS", "60"),
         max_output_tokens=env_int("MAX_OUTPUT_TOKENS", "2000"),
         temperature=env_float("TEMPERATURE", "0.2"),

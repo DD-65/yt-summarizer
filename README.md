@@ -52,7 +52,7 @@ conda activate voxmlx
 
 - Server hostname: `localhost`
 - Server port: `5432`
-- LLM used: `liquid/lfm2.5-1.2b`
+- LLM used: `mellum2-12b-a2.5b-instruct` (or any other model you have available in LM Studio, set with the `LM_MODEL` environment variable)
 
 6. Set your LM Studio API token as an environment variable:
 
@@ -104,7 +104,7 @@ Optional environment variables (set to the standard values I use):
 CONDAENV=voxmlx
 LM_HOST=localhost
 LM_PORT=5432
-LM_MODEL=liquid/lfm2.5-1.2b
+LM_MODEL=mellum2-12b-a2.5b-instruct #(kind of heavy to run, but very good for its size, you can hovever use any model available in your LM Studio instance)
 CHUNK_SECONDS=60
 MAX_OUTPUT_TOKENS=600
 TEMPERATURE=0.2
