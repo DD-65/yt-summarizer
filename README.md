@@ -2,12 +2,14 @@
 
 local pipeline that gives you a text summary of a YouTube video, and allows for interactive Q&A about the video content.
 
-`summarize.sh` does the following:
+`summarize.sh` delegates to `summarize.py`, which does the following:
 
 1. Downloads YouTube audio (& metadata) using `yt-dlp`
 2. Splits audio into chunks with `ffmpeg`
 3. Transcribes the chunks locally using `voxmlx`
-4. Sends the transcript to a local model in LM Studio for a concise summary
+4. Extracts structured evidence notes from transcript windows with LM Studio
+5. Classifies the video type and writes a final summary from the compact evidence notes
+6. Runs interactive Q&A with retrieval over the evidence notes and relevant transcript excerpts
 
 With `-t`, it stops after transcription and prints the transcript to stdout.
 
@@ -15,8 +17,7 @@ With `-t`, it stops after transcription and prints the transcript to stdout.
 
 - `yt-dlp`
 - `ffmpeg`
-- `curl`
-- `jq`
+- `python3`
 - `conda` with a `voxmlx` environment
 - `voxmlx` [CLI](https://github.com/awni/voxmlx) installed & available
 - LM Studio server running and reachable
@@ -35,7 +36,7 @@ cd yt-summarizer
 2. Install system dependencies:
 
 ```bash
-brew install yt-dlp ffmpeg jq
+brew install yt-dlp ffmpeg
 ```
 
 3. Install Conda if you do not already have it, then create the transcription environment:
@@ -51,7 +52,7 @@ conda activate voxmlx
 
 - Server hostname: `localhost`
 - Server port: `5432`
-- LLM used: `liquid/lfm2.5-1.2b`
+- LLM used: `mellum2-12b-a2.5b-instruct` (or any other model you have available in LM Studio, set with the `LM_MODEL` environment variable)
 
 6. Set your LM Studio API token as an environment variable:
 
@@ -103,13 +104,16 @@ Optional environment variables (set to the standard values I use):
 CONDAENV=voxmlx
 LM_HOST=localhost
 LM_PORT=5432
-LM_MODEL=liquid/lfm2.5-1.2b
+LM_MODEL=mellum2-12b-a2.5b-instruct #(kind of heavy to run, but very good for its size, you can hovever use any model available in your LM Studio instance)
 CHUNK_SECONDS=60
 MAX_OUTPUT_TOKENS=600
 TEMPERATURE=0.2
 KEEP_WORKDIR=0
 CACHE_DIR=~/.cache/yt-summarizer
 REFRESH_CACHE=0
+PIPELINE_WINDOW_CHUNKS=3
+QA_RETRIEVAL_NOTES=8
+QA_RETRIEVAL_CHUNKS=4
 ```
 
 ## Reference
